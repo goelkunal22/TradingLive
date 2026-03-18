@@ -734,7 +734,7 @@ export default function Home() {
             <span style={{ fontSize: 13, fontWeight: 700, color: "#555" }}>{activeTicker}</span>
             <span style={{ fontSize: 22, fontWeight: 900, color: ind.tf10m.priceChange >= 0 ? "#00ff88" : "#ff3333" }}>${f(ind.tf10m.price)}</span>
             <span style={{ fontSize: 13, color: ind.tf10m.priceChange >= 0 ? "#00ff88" : "#ff3333" }}>
-              {ind.tf10m.priceChange >= 0 ? "+" : ""}{f(ind.tf10m.priceChange)} ({ind.tf10m.pricePct >= 0 ? "+" : ""}{f(ind.tf10m.pricePct)}%)
+              {(() => {   const prev = parseFloat(ind.prevClose);   const curr = ind.tf10m.price;   const chg  = prev ? curr - prev : 0;   const pct  = prev ? (chg / prev) * 100 : 0;   return (     <span style={{ fontSize: 13, color: chg >= 0 ? "#00ff88" : "#ff3333" }}>       {chg >= 0 ? "+" : ""}{f(chg)} ({pct >= 0 ? "+" : ""}{f(pct)}%)     </span>   ); })()}
             </span>
             {lastUpdate && <span style={{ fontSize: 10, color: "#222", marginLeft: "auto" }}>Updated {lastUpdate.toLocaleTimeString()}</span>}
           </div>
