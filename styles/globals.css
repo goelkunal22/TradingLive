@@ -1,0 +1,22 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;600;700&display=swap');
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'IBM Plex Mono', 'Courier New', monospace;
+  background: #060608;
+  color: #c8c8d0;
+  min-height: 100vh;
+}
+
+input, select, textarea, button { font-family: inherit; }
+
+.pulse { animation: pulseAnim 2s ease-in-out infinite; }
+@keyframes pulseAnim { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+.fadeIn { animation: fadeInAnim 0.5s ease; }
+@keyframes fadeInAnim { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: #0a0a0c; }
+::-webkit-scrollbar-thumb { background: #1e1e28; border-radius: 2px; }
