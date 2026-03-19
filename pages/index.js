@@ -86,6 +86,287 @@ function calcTFIndicators(bars) {
 }
 
 
+
+
+// ─── MARKET FLOW SCANNER COMPONENT ───────────────────────────────────────────
+function MarketFlowTab({ onSelectTicker }) {
+  const [loading,     setLoading]     = useState(false);
+  const [data,        setData]        = useState(null);
+  const [error,       setError]       = useState("");
+  const [filter,      setFilter]      = useState("all");
+  const [minPremium,  setMinPremium]  = useState(25000);
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [aiReading,   setAiReading]   = useState("");
+  const [aiLoading,   setAiLoading]   = useState(false);
+  const timerRef = useRef(null);
+
+  const run = async (f, mp) => {
+    const useFilter  = f  ?? filter;
+    const usePremium = mp ?? minPremium;
+    setLoading(true); setError("");
+    try {
+      const res  = await fetch("/api/flowscan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filter: useFilter, minPremium: usePremium, limit: 100 }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      setData(json);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  const runFlowAI = async () => {
+    if (!data) return;
+    setAiLoading(true); setAiReading("");
+    try {
+      const top10 = data.events.slice(0, 10).map(e =>
+        `${e.ticker} ${e.type} $${e.strike} exp:${e.expiry} ${e.details} prem:${e.premiumFmt} ${e.tradeType} fill:${e.fillType}`
+      ).join("\n");
+
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          allBars: { bars1m:[], bars5m:[], bars10m:[], bars30m:[], barsDay:[], preMarket:{} },
+          ticker: "MARKET",
+          livePrice: null,
+          flowOverride: {
+            prompt: `You are an options flow expert. Analyze this real-time options flow data and give a 3-4 sentence market read. Focus on: what are the big players positioning for, is the flow bullish or bearish overall, any standout unusual bets, what does this mean for the next 1-2 hours of trading.
+
+Market P/C Ratio: ${data.market.pcRatio}
+Market Bias: ${data.market.bias}
+Net Premium Flow: ${data.market.netPremiumFmt}
+Call Premium: ${data.market.callPremiumFmt} | Put Premium: ${data.market.putPremiumFmt}
+Sweeps: ${data.market.sweepCount} | Blocks: ${data.market.blockCount} | Unusual: ${data.market.unusualCount}
+
+TOP 10 MOST AGGRESSIVE TRADES:
+${top10}
+
+Give your flow reading in Ripster/trader voice. Be direct and specific about what you see.`,
+          },
+        }),
+      });
+      const json = await res.json();
+      setAiReading(json.verdict || json.signal || json.action || "Flow analysis complete.");
+    } catch (e) { setAiReading("AI read failed: " + e.message); }
+    finally { setAiLoading(false); }
+  };
+
+  useEffect(() => {
+    if (autoRefresh) {
+      timerRef.current = setInterval(() => run(), 5 * 60 * 1000);
+    } else {
+      clearInterval(timerRef.current);
+    }
+    return () => clearInterval(timerRef.current);
+  }, [autoRefresh, filter, minPremium]);
+
+  const biasColor = b => b === "BULLISH" ? "#00ff88" : b === "BEARISH" ? "#ff3333" : "#ffcc00";
+  const typeColor = t => t === "CALL" ? "#00ff88" : "#ff3333";
+  const tagStyle  = t => {
+    const colors = { "SWEEP":"#ffcc00", "BLOCK":"#aa88ff", "UNUSUAL":"#00aaff" };
+    const c = colors[t] || "#555";
+    return { fontSize:9, padding:"2px 6px", borderRadius:3, background:c+"22", color:c, border:`1px solid ${c}44`, fontWeight:700, whiteSpace:"nowrap" };
+  };
+  const fillStyle = f => {
+    const colors = { "AA":"#00ff00","A":"#00cc88","M":"#888","B":"#ff8c00","BB":"#ff3333" };
+    return { fontSize:10, fontWeight:700, color: colors[f] || "#888" };
+  };
+
+  const FILTERS = [
+    { key:"all",     label:"All Flow" },
+    { key:"bullish", label:"🟢 Calls" },
+    { key:"bearish", label:"🔴 Puts" },
+    { key:"sweeps",  label:"⚡ Sweeps" },
+    { key:"blocks",  label:"🟪 Blocks" },
+  ];
+
+  const PREMIUMS = [
+    { val:25000,  label:"$25K+" },
+    { val:50000,  label:"$50K+" },
+    { val:100000, label:"$100K+" },
+    { val:250000, label:"$250K+" },
+    { val:500000, label:"$500K+" },
+  ];
+
+  return (
+    <div>
+      {/* Controls */}
+      <div style={{ background:"#0c0c12", border:"1px solid #14141e", borderRadius:10, padding:16, marginBottom:12 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+          <div>
+            <div style={{ fontSize:10, color:"#444", letterSpacing:3, marginBottom:2 }}>MARKET FLOW SCANNER</div>
+            <div style={{ fontSize:11, color:"#555" }}>Live sweeps, blocks & unusual activity across 80+ tickers</div>
+          </div>
+          {data && <div style={{ fontSize:10, color:"#333" }}>{data.scanned} scanned · {data.total} events · {new Date(data.timestamp).toLocaleTimeString()}</div>}
+        </div>
+
+        <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 }}>
+          {FILTERS.map(f => (
+            <button key={f.key} onClick={() => setFilter(f.key)}
+              style={{ padding:"5px 12px", background: filter===f.key ? "#ffcc0022":"#0a0a10", border:`1px solid ${filter===f.key ? "#ffcc00":"#1e1e2e"}`, borderRadius:6, color: filter===f.key ? "#ffcc00":"#555", fontSize:11, cursor:"pointer" }}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:12, alignItems:"center" }}>
+          <span style={{ fontSize:10, color:"#333" }}>MIN PREMIUM:</span>
+          {PREMIUMS.map(p => (
+            <button key={p.val} onClick={() => setMinPremium(p.val)}
+              style={{ padding:"4px 10px", background: minPremium===p.val ? "#aa88ff22":"#0a0a10", border:`1px solid ${minPremium===p.val ? "#aa88ff":"#1e1e2e"}`, borderRadius:6, color: minPremium===p.val ? "#aa88ff":"#555", fontSize:10, cursor:"pointer" }}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display:"flex", gap:8 }}>
+          <button onClick={() => run()} disabled={loading}
+            style={{ flex:1, padding:"11px 0", background: loading ? "#111" : "linear-gradient(135deg,#ffcc00,#ff8c00)", border:"none", borderRadius:6, color:"#000", fontSize:13, fontWeight:700, cursor: loading ? "not-allowed" : "pointer" }}>
+            {loading ? "⏳ SCANNING 80+ TICKERS..." : "💰 SCAN MARKET FLOW"}
+          </button>
+          <button onClick={() => setAutoRefresh(a => !a)}
+            style={{ padding:"11px 14px", background: autoRefresh ? "#00ff8822":"#0a0a10", border:`1px solid ${autoRefresh ? "#00ff88":"#1e1e2e"}`, borderRadius:6, color: autoRefresh ? "#00ff88":"#555", fontSize:11, cursor:"pointer" }}>
+            {autoRefresh ? "🔄 AUTO" : "🔄"}
+          </button>
+        </div>
+        {error && <div style={{ color:"#ff5555", fontSize:11, marginTop:8 }}>⚠ {error}</div>}
+      </div>
+
+      {data && (
+        <div>
+          {/* Market Tide */}
+          <div style={{ background:"#0c0c12", border:`1px solid ${biasColor(data.market.bias)}33`, borderTop:`3px solid ${biasColor(data.market.bias)}`, borderRadius:10, padding:18, marginBottom:12 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12, marginBottom:16 }}>
+              <div>
+                <div style={{ fontSize:10, color:"#444", letterSpacing:3, marginBottom:4 }}>MARKET TIDE</div>
+                <div style={{ fontSize:26, fontWeight:900, color:biasColor(data.market.bias), marginBottom:4 }}>
+                  {data.market.bias} <span style={{ fontSize:13, color:"#555", fontWeight:400 }}>P/C {data.market.pcRatio}</span>
+                </div>
+                <div style={{ fontSize:12, color:"#666" }}>
+                  Net Flow: <span style={{ color: data.market.netPremium >= 0 ? "#00ff88":"#ff3333", fontWeight:700 }}>{data.market.netPremiumFmt}</span>
+                </div>
+              </div>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                {[
+                  { label:"CALLS",   val: data.market.callPremiumFmt, count: data.market.bullishCount, color:"#00ff88" },
+                  { label:"PUTS",    val: data.market.putPremiumFmt,  count: data.market.bearishCount, color:"#ff3333" },
+                  { label:"SWEEPS",  val: data.market.sweepCount,     count: null,                     color:"#ffcc00" },
+                  { label:"BLOCKS",  val: data.market.blockCount,     count: null,                     color:"#aa88ff" },
+                ].map(({ label, val, count, color }) => (
+                  <div key={label} style={{ textAlign:"center", background:color+"11", border:`1px solid ${color}33`, borderRadius:8, padding:"10px 14px", minWidth:70 }}>
+                    <div style={{ fontSize:16, fontWeight:900, color }}>{val}</div>
+                    {count != null && <div style={{ fontSize:9, color:"#444", marginTop:2 }}>{count} trades</div>}
+                    <div style={{ fontSize:9, color:"#333", marginTop:2 }}>{label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Premium flow bar */}
+            {(() => {
+              const total = (data.market.callPremium + data.market.putPremium) || 1;
+              const callPct = (data.market.callPremium / total * 100).toFixed(1);
+              const putPct  = (data.market.putPremium  / total * 100).toFixed(1);
+              return (
+                <div>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, color:"#444", marginBottom:4 }}>
+                    <span>🟢 CALLS {callPct}% — {data.market.callPremiumFmt}</span>
+                    <span>PUTS {putPct}% — {data.market.putPremiumFmt} 🔴</span>
+                  </div>
+                  <div style={{ display:"flex", height:12, borderRadius:6, overflow:"hidden", background:"#0a0a10" }}>
+                    <div style={{ width:`${callPct}%`, background:"linear-gradient(90deg,#00ff8866,#00ff88)", transition:"width 1.5s ease" }} />
+                    <div style={{ width:`${putPct}%`,  background:"linear-gradient(90deg,#ff333366,#ff3333)", transition:"width 1.5s ease" }} />
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Flow AI */}
+          <div style={{ background:"#0c0c12", border:"1px solid #14141e", borderRadius:10, padding:16, marginBottom:12 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+              <div style={{ fontSize:10, color:"#444", letterSpacing:3 }}>FLOW AI</div>
+              <button onClick={runFlowAI} disabled={aiLoading}
+                style={{ padding:"6px 14px", background: aiLoading ? "#111" : "#aa88ff22", border:"1px solid #aa88ff44", borderRadius:6, color:"#aa88ff", fontSize:11, cursor: aiLoading ? "not-allowed" : "pointer" }}>
+                {aiLoading ? "⏳ Reading..." : "🧠 Get AI Read"}
+              </button>
+            </div>
+            {aiReading ? (
+              <div style={{ fontSize:12, color:"#ccc", lineHeight:1.8, fontStyle:"italic" }}>"{aiReading}"</div>
+            ) : (
+              <div style={{ fontSize:11, color:"#333" }}>Hit "Get AI Read" for an AI interpretation of the current flow</div>
+            )}
+          </div>
+
+          {/* Live Feed Table — Ghostboard style */}
+          <div style={{ background:"#0c0c12", border:"1px solid #14141e", borderRadius:10, padding:16 }}>
+            <div style={{ fontSize:10, color:"#444", letterSpacing:3, marginBottom:14 }}>LIVE FLOW — {data.events.length} EVENTS</div>
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                <thead>
+                  <tr style={{ borderBottom:"2px solid #1a1a28" }}>
+                    {["Symbol","Exp","Strike","C/P","Spot","Details","Value","DTE","IV","Tag"].map(h => (
+                      <th key={h} style={{ padding:"8px 10px", color:"#444", fontWeight:400, textAlign: h==="Symbol" ? "left":"right", whiteSpace:"nowrap", fontSize:10, letterSpacing:1 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.events.map((e, i) => {
+                    const tc = typeColor(e.type);
+                    const premColor = e.premium >= 1e6 ? "#ffcc00" : e.premium >= 500000 ? "#aa88ff" : e.premium >= 100000 ? "#00aaff" : "#888";
+                    return (
+                      <tr key={i}
+                        style={{ borderBottom:"1px solid #0a0a10", cursor:"pointer", transition:"background 0.15s" }}
+                        onClick={() => onSelectTicker && onSelectTicker(e.ticker)}
+                        onMouseEnter={el => el.currentTarget.style.background = "#0e0e18"}
+                        onMouseLeave={el => el.currentTarget.style.background = "transparent"}>
+                        <td style={{ padding:"9px 10px" }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                            <span style={{ fontSize:13, fontWeight:900, color:"#fff" }}>{e.ticker}</span>
+                            <span style={{ fontSize:9, color:"#444" }}>→ analyze</span>
+                          </div>
+                        </td>
+                        <td style={{ padding:"9px 10px", color:"#555", textAlign:"right" }}>{e.expiry}</td>
+                        <td style={{ padding:"9px 10px", color:"#ccc", fontWeight:700, textAlign:"right" }}>${e.strike}</td>
+                        <td style={{ padding:"9px 10px", textAlign:"right" }}>
+                          <span style={{ background:tc+"22", border:`1px solid ${tc}55`, borderRadius:4, padding:"2px 8px", color:tc, fontWeight:700, fontSize:10 }}>{e.type}</span>
+                        </td>
+                        <td style={{ padding:"9px 10px", color:"#888", textAlign:"right" }}>${e.spot}</td>
+                        <td style={{ padding:"9px 10px", textAlign:"right" }}>
+                          <span style={fillStyle(e.fillType)}>{e.details}</span>
+                        </td>
+                        <td style={{ padding:"9px 10px", textAlign:"right" }}>
+                          <span style={{ color:premColor, fontWeight:700 }}>{e.premiumFmt}</span>
+                        </td>
+                        <td style={{ padding:"9px 10px", color: e.daysOut <= 7 ? "#ff8c00" : e.daysOut <= 14 ? "#ffcc00" : "#555", textAlign:"right" }}>{e.daysOut}d</td>
+                        <td style={{ padding:"9px 10px", color:"#555", textAlign:"right" }}>{e.iv}%</td>
+                        <td style={{ padding:"9px 10px", textAlign:"right" }}>
+                          <span style={tagStyle(e.tradeType)}>{e.tradeType}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ marginTop:14, padding:12, background:"#0a0a10", borderRadius:8, fontSize:10, color:"#333", lineHeight:1.8 }}>
+              <span style={{ color:"#00ff00", fontWeight:700 }}>AA</span> = Above ask (most aggressive buy) &nbsp;
+              <span style={{ color:"#00cc88", fontWeight:700 }}>A</span> = At ask &nbsp;
+              <span style={{ color:"#888", fontWeight:700 }}>M</span> = At mid &nbsp;
+              <span style={{ color:"#ff8c00", fontWeight:700 }}>B</span> = At bid &nbsp;
+              <span style={{ color:"#ff3333", fontWeight:700 }}>BB</span> = Below bid (most aggressive sell) &nbsp;·&nbsp;
+              Click any row to run full Ripster MTF analysis
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── FLOW TAB COMPONENT ───────────────────────────────────────────────────────
 function FlowTab({ ticker }) {
   const [loading, setLoading] = useState(false);
@@ -683,7 +964,7 @@ export default function Home() {
     </div>
   );
 
-  const TABS = ["overview","mtf","levels","volume","flow","scanner","pattern"];
+  const TABS = ["overview","mtf","levels","volume","mktflow","flow","scanner","pattern"];
 
   return (
     <>
@@ -789,7 +1070,7 @@ export default function Home() {
           {TABS.map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)}
               style={{ flex: 1, minWidth: 60, padding: "8px 4px", background: activeTab === tab ? "#0c0c14" : "transparent", border: activeTab === tab ? "1px solid #1e1e2e" : "1px solid transparent", borderRadius: 6, color: activeTab === tab ? "#00ff88" : "#444", fontSize: 10, textTransform: "uppercase", letterSpacing: 1, cursor: "pointer" }}>
-              {tab === "overview" ? "Overview" : tab === "mtf" ? "MTF Clouds" : tab === "levels" ? "Key Levels" : tab === "volume" ? "Volume" : tab === "flow" ? "💰 Flow" : tab === "scanner" ? "🔍 Scanner" : "🧠 Pattern"}
+              {tab === "overview" ? "Overview" : tab === "mtf" ? "MTF Clouds" : tab === "levels" ? "Key Levels" : tab === "volume" ? "Volume" : tab === "mktflow" ? "🌊 Mkt Flow" : tab === "flow" ? "💰 Flow" : tab === "scanner" ? "🔍 Scanner" : "🧠 Pattern"}
             </button>
           ))}
         </div>
@@ -979,6 +1260,11 @@ export default function Home() {
           </div>
         )}
 
+
+        {/* MARKET FLOW */}
+        {activeTab === "mktflow" && (
+          <MarketFlowTab onSelectTicker={handleSelectTicker} />
+        )}
 
         {/* FLOW */}
         {activeTab === "flow" && (

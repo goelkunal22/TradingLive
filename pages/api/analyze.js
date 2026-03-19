@@ -198,8 +198,29 @@ const f = (n, d = 2) => n != null && !isNaN(n) ? Number(n).toFixed(d) : "N/A";
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
-  const { allBars, ticker, livePrice } = req.body;
+  const { allBars, ticker, livePrice, flowOverride } = req.body;
   if (!allBars) return res.status(400).json({ error: "allBars required" });
+
+  // Flow AI override — skip indicator calcs and just run the custom prompt
+  if (flowOverride?.prompt) {
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 400,
+          messages: [{ role: "user", content: flowOverride.prompt }],
+        }),
+      });
+      const data = await response.json();
+      if (data.error) throw new Error(data.error.message);
+      const text = data.content?.map(b => b.text || "").join("") || "";
+      return res.status(200).json({ verdict: text.trim() });
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY not set." });
