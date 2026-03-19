@@ -158,9 +158,7 @@ export default async function handler(req, res) {
     const blockCount   = allEvents.filter(e => e.tradeType === "BLOCK").length;
     const unusualCount = allEvents.filter(e => e.tradeType === "UNUSUAL").length;
 
-    const fmt$ = n => n >= 1e6 ? "$" + (n/1e6).toFixed(1) + "M"
-      : n >= 1e3 ? "$" + (n/1e3).toFixed(0) + "K"
-      : "$" + Math.round(n);
+  
 
     res.status(200).json({
       events:    filtered.slice(0, limit),
